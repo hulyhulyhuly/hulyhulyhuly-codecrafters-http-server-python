@@ -1,136 +1,147 @@
 import argparse
+import gzip
 import os
 import re
 import socket
 import threading
-import gzip
 
 
 class ResponseStatus:
-    OK_200 = b"HTTP/1.1 200 OK\r\n\r\n"
+    OK_200 = "200 OK\r\n\r\n"
+    CREATED_201 = "201 Created"
 
-    def OK_200_with_body(data: str, compressed) -> bytes:
+    NOT_FOUND_404 = "HTTP/1.1 404 Not Found\r\n\r\n"
+
+
+class HTTPResponse:
+    @staticmethod
+    def build_response(
+        status: ResponseStatus, headers: dict, body: bytes = b""
+    ) -> bytes:
+        response_line = f"HTTP/1.1 {status}\r\n"
+        headers_line = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
+        return f"{response_line}{headers_line}\r\n".encode() + body
+
+    @staticmethod
+    def ok_with_body(data: str, compressed: str = None) -> bytes:
         if compressed == "gzip":
-            data = gzip.compress(data.encode())
-            response = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Encoding: {compressed}\r\n"
-                f"Content-Type: text/plain\r\n"
-                f"Content-Length: {len(data)}\r\n\r\n"
-            )
-            return response.encode() + data
+            body = gzip.compress(data.encode())
+            headers = {
+                "Content-Encoding": "gzip",
+                "Content-Type": "text/plain",
+                "Content-Length": len(body),
+            }
         else:
-            response = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Type: text/plain\r\n"
-                f"Content-Length: {len(data)}\r\n\r\n"
-                f"{data}"
-            )
-            return response.encode()
+            body = data.encode()
+            headers = {
+                "Content-Type": "text/plain",
+                "Content-Length": len(body),
+            }
+        print(body, gzip.decompress(body))
+        return HTTPResponse.build_response(ResponseStatus.OK_200, headers, body)
 
-    def OK_200_with_user_agent(user_agent: str) -> bytes:
-        response = (
-            f"HTTP/1.1 200 OK\r\n"
-            f"Content-Type: text/plain\r\n"
-            f"Content-Length: {len(user_agent)}\r\n\r\n"
-            f"{user_agent}"
-        )
-        return response.encode()
+    @staticmethod
+    def ok_with_user_agent(user_agent: str) -> bytes:
+        body = user_agent.encode()
+        headers = {
+            "Content-Type": "text/plain",
+            "Content-Length": len(body),
+        }
+        return HTTPResponse.build_response(ResponseStatus.OK_200, headers, body)
 
-    def OK_200_with_file(filename: str) -> bytes | None:
-        filepath = f"{BASE_DIR}{filename}"
+    @staticmethod
+    def ok_with_file(filepath: str) -> bytes:
         if os.path.exists(filepath):
-            file = open(filepath).read()
-            response = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Type: application/octet-stream\r\n"
-                f"Content-Length: {len(file)}\r\n\r\n"
-                f"{file}"
-            )
-            return response.encode()
+            with open(filepath, "rb") as f:
+                body = f.read()
+            headers = {
+                "Content-Type": "application/octet-stream",
+                "Content-Length": len(body),
+            }
+            return HTTPResponse.build_response(ResponseStatus.OK_200, headers, body)
         else:
-            return None
+            return HTTPResponse.not_found()
 
-    def CREATED_201(filename: str, filecontent) -> bytes:
-        filepath = f"{BASE_DIR}{filename}"
-        with open(filepath, "w") as f:
-            f.write(filecontent)
-        return b"HTTP/1.1 201 Created\r\n\r\n"
+    @staticmethod
+    def created(filepath: str) -> bytes:
+        headers = {"Content-Length": 0}
+        return HTTPResponse.build_response(ResponseStatus.CREATED_201, headers)
 
-    NOT_FOUND_404 = b"HTTP/1.1 404 Not Found\r\n\r\n"
+    @staticmethod
+    def not_found() -> bytes:
+        return HTTPResponse.build_response(ResponseStatus.NOT_FOUND_404, {})
 
 
-def parse_encoding_type(accept_encoding):
-    # TODO
+def parse_encoding_type(accept_encoding: str) -> str:
+    encodings = [e.strip() for e in accept_encoding.split(",")]
+    if "gzip" in encodings:
+        return "gzip"
     return ""
 
 
+def handle_get(conn, path: str, headers: dict):
+    if path == "/":
+        conn.sendall(HTTPResponse.build_response(ResponseStatus.OK_200, {}))
+    elif path == "/user-agent":
+        user_agent = headers.get("User-Agent", "")
+        conn.sendall(HTTPResponse.ok_with_user_agent(user_agent))
+    elif path.startswith("/files/"):
+        filename = path[len("/files/") :]
+        conn.sendall(HTTPResponse.ok_with_file(os.path.join(BASE_DIR, filename)))
+    elif path.startswith("/echo/"):
+        data = path[len("/echo/") :]
+        encoding = parse_encoding_type(headers.get("Accept-Encoding", ""))
+        conn.sendall(HTTPResponse.ok_with_body(data, encoding))
+    else:
+        conn.sendall(HTTPResponse.not_found())
+
+
+def handle_post(conn, path: str, content: str):
+    if path.startswith("/files/"):
+        filename = path[len("/files/") :]
+        file_content = content.split("\r\n\r\n", 1)[-1]
+        filepath = os.path.join(BASE_DIR, filename)
+        with open(filepath, "w") as f:
+            f.write(file_content)
+        conn.sendall(HTTPResponse.created(filepath))
+    else:
+        conn.sendall(HTTPResponse.not_found())
+
+
 def server_thread(conn, _addr):
-    content = conn.recv(1024).decode()
+    try:
+        content = conn.recv(1024).decode()
+        request_line, headers_alone = content.split("\r\n", 1)
+        method, path, _ = request_line.split(" ")
 
-    """
-    [0] -> Method
-    [1] -> Path
-    [2] -> Http's Version
-    """
-    contents = content.split(" ")
-    method = contents[0]
-    path = contents[1] or None
+        headers = {}
 
-    rule_user_agent = "User-Agent: (.*)\r\n"
-    result_user_agent = re.search(rule_user_agent, content)
+        for line in headers_alone.split("\r\n"):
+            if line:
+                key, value = line.split(":", 1)
+                headers[key.strip()] = value.strip()
 
-    rule_accept_encoding = "Accept-Encoding: (.*)\r\n"
-    result_accept_encoding = re.search(rule_accept_encoding, content)
-
-    rule_echo = "/echo/(.*)"
-    result_echo = re.search(rule_echo, path)
-
-    rule_file = "/files/(.*)"
-    result_file = re.search(rule_file, path)
-
-    if method == "GET":
-        if path == "/":
-            conn.sendall(ResponseStatus.OK_200)
-        elif path == "/user-agent":
-            res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
-            conn.sendall(res)
-        elif result_file:
-            res = ResponseStatus.OK_200_with_file(result_file.group(1))
-            if res:
-                conn.sendall(res)
-            else:
-                conn.sendall(ResponseStatus.NOT_FOUND_404)
-        elif result_echo:
-            if result_accept_encoding:
-                encodings = result_accept_encoding.group(1).split(", ")
-                if "gzip" in encodings:
-                    compressed = "gzip"
-                else:
-                    compressed = False
-            else:
-                compressed = False
-            res = ResponseStatus.OK_200_with_body(result_echo.group(1), compressed)
-            conn.sendall(res)
+        if method == "GET":
+            handle_get(conn, path, headers)
+        elif method == "POST":
+            handle_post(conn, path, content)
         else:
-            conn.sendall(ResponseStatus.NOT_FOUND_404)
-    elif method == "POST":
-        if result_file:
-            file_content = content.split("\r\n")[-1]
-            res = ResponseStatus.CREATED_201(result_file.group(1), file_content)
-            conn.sendall(res)
-    conn.close()
+            conn.sendall(HTTPResponse.not_found())
+    except Exception as e:
+        print(f"Error handling request: {e}")
+    finally:
+        conn.close()
 
 
 def main() -> None:
     parse = argparse.ArgumentParser()
     parse.add_argument("--directory", type=str, help="Directory")
 
-    server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
-    server_socket.listen()
-
     global BASE_DIR
     BASE_DIR = parse.parse_args().directory
+
+    server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
+    server_socket.listen()
 
     try:
         while True:
