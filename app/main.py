@@ -16,7 +16,7 @@ class ResponseStatus:
 
 def main() -> None:
     server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
-
+    server_socket.listen()
     conn, _addr = server_socket.accept()
 
     content = conn.recv(1024).decode()
@@ -46,8 +46,6 @@ def main() -> None:
         conn.sendall(res)
     else:
         conn.sendall(ResponseStatus.NOT_FOUND_404)
-
-    conn.close()
 
 
 # HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nabc
