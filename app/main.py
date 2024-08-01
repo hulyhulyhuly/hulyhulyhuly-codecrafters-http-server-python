@@ -1,3 +1,5 @@
+import argparse
+import os
 import re
 import socket
 import threading
@@ -24,6 +26,20 @@ class ResponseStatus:
         )
         return response.encode()
 
+    def OK_200_with_file(filename: str) -> bytes | None:
+        filepath = f"{BASE_DIR}{filename}"
+        if os.path.exists(filepath):
+            file = open(filepath).read()
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: application/octet-stream\r\n"
+                f"Content-Length: {len(file)}\r\n\r\n"
+                f"{file}"
+            )
+            return response.encode()
+        else:
+            return None
+
     NOT_FOUND_404 = b"HTTP/1.1 404 Not Found\r\n\r\n"
 
 
@@ -44,11 +60,21 @@ def server_thread(conn, _addr):
     rule_echo = "/echo/(.*)"
     result_echo = re.search(rule_echo, path)
 
+    rule_file = "/files/(.*)"
+    result_file = re.search(rule_file, path)
+
     if path == "/":
         conn.sendall(ResponseStatus.OK_200)
-    elif result_user_agent:
+    # elif result_user_agent:
+    elif path == "/user-agent":
         res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
         conn.sendall(res)
+    elif result_file:
+        res = ResponseStatus.OK_200_with_file(result_file.group(1))
+        if res:
+            conn.sendall(res)
+        else:
+            conn.sendall(ResponseStatus.NOT_FOUND_404)
     elif result_echo:
         res = ResponseStatus.OK_200_with_body(result_echo.group(1))
         conn.sendall(res)
@@ -59,8 +85,14 @@ def server_thread(conn, _addr):
 
 
 def main() -> None:
+    parse = argparse.ArgumentParser()
+    parse.add_argument("--directory", type=str, help="Directory")
+
     server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
     server_socket.listen()
+
+    global BASE_DIR
+    BASE_DIR = parse.parse_args().directory
 
     try:
         while True:
