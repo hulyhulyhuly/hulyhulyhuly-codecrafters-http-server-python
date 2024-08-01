@@ -38,18 +38,17 @@ def server_thread(conn, _addr):
     contents = content.split(" ")
     path = contents[1] or None
 
-    rule_user_agent = "User-Agent: (.*?)\r\n"
+    rule_user_agent = "User-Agent: (.*)\r\n"
     result_user_agent = re.search(rule_user_agent, content)
 
     rule_echo = "/echo/(.*)"
     result_echo = re.search(rule_echo, path)
 
     if path == "/":
-        if result_user_agent:
-            res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
-            conn.sendall(res)
-        else:
-            conn.sendall(ResponseStatus.OK_200)
+        conn.sendall(ResponseStatus.OK_200)
+    elif result_user_agent:
+        res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
+        conn.sendall(res)
     elif result_echo:
         res = ResponseStatus.OK_200_with_body(result_echo.group(1))
         conn.sendall(res)
