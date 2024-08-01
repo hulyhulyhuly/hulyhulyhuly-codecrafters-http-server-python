@@ -40,6 +40,12 @@ class ResponseStatus:
         else:
             return None
 
+    def CREATED_201(filename: str, filecontent) -> bytes:
+        filepath = f"{BASE_DIR}{filename}"
+        with open(filepath, "w") as f:
+            f.write(filecontent)
+        return b"HTTP/1.1 201 Created\r\n\r\n"
+
     NOT_FOUND_404 = b"HTTP/1.1 404 Not Found\r\n\r\n"
 
 
@@ -52,6 +58,7 @@ def server_thread(conn, _addr):
     [2] -> Http's Version
     """
     contents = content.split(" ")
+    method = contents[0]
     path = contents[1] or None
 
     rule_user_agent = "User-Agent: (.*)\r\n"
@@ -63,24 +70,29 @@ def server_thread(conn, _addr):
     rule_file = "/files/(.*)"
     result_file = re.search(rule_file, path)
 
-    if path == "/":
-        conn.sendall(ResponseStatus.OK_200)
-    # elif result_user_agent:
-    elif path == "/user-agent":
-        res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
-        conn.sendall(res)
-    elif result_file:
-        res = ResponseStatus.OK_200_with_file(result_file.group(1))
-        if res:
+    if method == "GET":
+        if path == "/":
+            conn.sendall(ResponseStatus.OK_200)
+        # elif result_user_agent:
+        elif path == "/user-agent":
+            res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
+            conn.sendall(res)
+        elif result_file:
+            res = ResponseStatus.OK_200_with_file(result_file.group(1))
+            if res:
+                conn.sendall(res)
+            else:
+                conn.sendall(ResponseStatus.NOT_FOUND_404)
+        elif result_echo:
+            res = ResponseStatus.OK_200_with_body(result_echo.group(1))
             conn.sendall(res)
         else:
             conn.sendall(ResponseStatus.NOT_FOUND_404)
-    elif result_echo:
-        res = ResponseStatus.OK_200_with_body(result_echo.group(1))
-        conn.sendall(res)
-    else:
-        conn.sendall(ResponseStatus.NOT_FOUND_404)
-
+    elif method == "POST":
+        if result_file:
+            file_content = content.split("\r\n")[-1]
+            res = ResponseStatus.CREATED_201(result_file.group(1), file_content)
+            conn.sendall(res)
     conn.close()
 
 
