@@ -8,13 +8,22 @@ import threading
 class ResponseStatus:
     OK_200 = b"HTTP/1.1 200 OK\r\n\r\n"
 
-    def OK_200_with_body(data: str) -> bytes:
-        response = (
-            f"HTTP/1.1 200 OK\r\n"
-            f"Content-Type: text/plain\r\n"
-            f"Content-Length: {len(data)}\r\n\r\n"
-            f"{data}"
-        )
+    def OK_200_with_body(data: str, compressed) -> bytes:
+        if compressed:
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/plain\r\n"
+                f"Content-Encoding: {compressed}\r\n"
+                f"Content-Length: {len(data)}\r\n\r\n"
+                f"{data}"
+            )
+        else:
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/plain\r\n"
+                f"Content-Length: {len(data)}\r\n\r\n"
+                f"{data}"
+            )
         return response.encode()
 
     def OK_200_with_user_agent(user_agent: str) -> bytes:
@@ -64,6 +73,9 @@ def server_thread(conn, _addr):
     rule_user_agent = "User-Agent: (.*)\r\n"
     result_user_agent = re.search(rule_user_agent, content)
 
+    rule_accept_encoding = "Accept-Encoding: (.*)\r\n"
+    result_accept_encoding = re.search(rule_accept_encoding, content)
+
     rule_echo = "/echo/(.*)"
     result_echo = re.search(rule_echo, path)
 
@@ -84,7 +96,15 @@ def server_thread(conn, _addr):
             else:
                 conn.sendall(ResponseStatus.NOT_FOUND_404)
         elif result_echo:
-            res = ResponseStatus.OK_200_with_body(result_echo.group(1))
+            if result_accept_encoding:
+                encoding = result_accept_encoding.group(1)
+                if encoding == "gzip":
+                    compressed = encoding
+                else:
+                    compressed = False
+            else:
+                compressed = False
+            res = ResponseStatus.OK_200_with_body(result_echo.group(1), compressed)
             conn.sendall(res)
         else:
             conn.sendall(ResponseStatus.NOT_FOUND_404)
