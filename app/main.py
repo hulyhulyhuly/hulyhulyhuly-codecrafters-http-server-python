@@ -3,21 +3,30 @@ import os
 import re
 import socket
 import threading
+import gzip
 
 
 class ResponseStatus:
     OK_200 = b"HTTP/1.1 200 OK\r\n\r\n"
 
     def OK_200_with_body(data: str, compressed) -> bytes:
-        content_encodeing = f"Content-Encoding: {compressed}\r\n" if compressed else ""
-        response = (
-            f"HTTP/1.1 200 OK\r\n"
-            f"Content-Type: text/plain\r\n"
-            f"{content_encodeing}"
-            f"Content-Length: {len(data)}\r\n\r\n"
-            f"{data}"
-        )
-        return response.encode()
+        if compressed == "gzip":
+            data = gzip.compress(data.encode())
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Encoding: {compressed}\r\n"
+                f"Content-Type: text/plain\r\n"
+                f"Content-Length: {len(data)}\r\n\r\n"
+            )
+            return response.encode() + data
+        else:
+            response = (
+                f"HTTP/1.1 200 OK\r\n"
+                f"Content-Type: text/plain\r\n"
+                f"Content-Length: {len(data)}\r\n\r\n"
+                f"{data}"
+            )
+            return response.encode()
 
     def OK_200_with_user_agent(user_agent: str) -> bytes:
         response = (
