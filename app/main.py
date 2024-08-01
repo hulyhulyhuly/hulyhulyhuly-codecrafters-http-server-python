@@ -9,21 +9,14 @@ class ResponseStatus:
     OK_200 = b"HTTP/1.1 200 OK\r\n\r\n"
 
     def OK_200_with_body(data: str, compressed) -> bytes:
-        if compressed:
-            response = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Type: text/plain\r\n"
-                f"Content-Encoding: {compressed}\r\n"
-                f"Content-Length: {len(data)}\r\n\r\n"
-                f"{data}"
-            )
-        else:
-            response = (
-                f"HTTP/1.1 200 OK\r\n"
-                f"Content-Type: text/plain\r\n"
-                f"Content-Length: {len(data)}\r\n\r\n"
-                f"{data}"
-            )
+        content_encodeing = f"Content-Encoding: {compressed}\r\n" if compressed else ""
+        response = (
+            f"HTTP/1.1 200 OK\r\n"
+            f"Content-Type: text/plain\r\n"
+            f"{content_encodeing}"
+            f"Content-Length: {len(data)}\r\n\r\n"
+            f"{data}"
+        )
         return response.encode()
 
     def OK_200_with_user_agent(user_agent: str) -> bytes:
@@ -58,6 +51,11 @@ class ResponseStatus:
     NOT_FOUND_404 = b"HTTP/1.1 404 Not Found\r\n\r\n"
 
 
+def parse_encoding_type(accept_encoding):
+    # TODO
+    return ""
+
+
 def server_thread(conn, _addr):
     content = conn.recv(1024).decode()
 
@@ -85,7 +83,6 @@ def server_thread(conn, _addr):
     if method == "GET":
         if path == "/":
             conn.sendall(ResponseStatus.OK_200)
-        # elif result_user_agent:
         elif path == "/user-agent":
             res = ResponseStatus.OK_200_with_user_agent(result_user_agent.group(1))
             conn.sendall(res)
@@ -97,9 +94,9 @@ def server_thread(conn, _addr):
                 conn.sendall(ResponseStatus.NOT_FOUND_404)
         elif result_echo:
             if result_accept_encoding:
-                encoding = result_accept_encoding.group(1)
-                if encoding == "gzip":
-                    compressed = encoding
+                encodings = result_accept_encoding.group(1).split(", ")
+                if "gzip" in encodings:
+                    compressed = "gzip"
                 else:
                     compressed = False
             else:
